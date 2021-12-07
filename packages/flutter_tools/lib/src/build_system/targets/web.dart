@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -403,6 +404,8 @@ class WebReleaseBundle extends Target {
       resourceFile,
       environment.buildDir.childFile('web_resources.d'),
     );
+    // add js / images file with hash
+    await ResourcesHandler().init(environment);
   }
 }
 
@@ -515,11 +518,12 @@ class WebServiceWorker extends Target {
     final ServiceWorkerStrategy serviceWorkerStrategy = _serviceWorkerStrategyFromString(
       environment.defines[kServiceWorkerStrategy],
     );
+    final String mainJsHash = ResourcesHandler.getMainJsHash();
     final String serviceWorker = generateServiceWorker(
       urlToHash,
       <String>[
         '/',
-        'main.dart.js',
+        'main.dart.$mainJsHash.js',
         'index.html',
         'assets/NOTICES',
         if (urlToHash.containsKey('assets/AssetManifest.json'))
@@ -731,4 +735,244 @@ function onlineFirst(event) {
   );
 }
 ''';
+}
+
+/// To make images main.dart.js xxx.part.js with hash
+/// the resources with hash has block browser use cache
+class ResourcesHandler {
+  /// to cache the resources name and path
+  Map<String, List<String>> resourcesMap = <String, List<String>>{};
+  // calculated main.dart.js hash
+  static String _mainJsHash = '';
+
+  Future<void> init(Environment environment) async {
+    await createResourcesMap(environment);
+    await imagesAddHash();
+    _mainJsHash = await jsAddHash();
+    await replaceMainJsNameInHtml(environment, _mainJsHash);
+  }
+
+  static String getMainJsHash() {
+    return _mainJsHash;
+  }
+
+  /// to general images map, the key is image relative path and the value is image with hash path
+  /// like a/b/c.png --> a/b/c.[hash].png
+  Future<Map<String, String>> _getImagesMap() async {
+    final Map<String, String> imagesMap = <String, String>{};
+    final List<String> imageList = resourcesMap['image'] ?? <String>[];
+    if (imageList != null) {
+      for (int i = 0; i < imageList.length; i++) {
+        final String imgPath = imageList[i];
+        final List<String> list = imgPath.split('/');
+        final String relativePath = list.sublist(list.length - 2).join('/');
+        final File file = globals.fs.file(imgPath);
+        final String hash = await _getFileMd5(file);
+        imagesMap.putIfAbsent(
+          relativePath,
+              () => renameFileName(relativePath, hash),
+        );
+        final String newPath = renameFileName(imgPath, hash);
+        await file.copy(newPath);
+        deleteFile(imgPath);
+      }
+    }
+    return Future<Map<String, String>>.value(imagesMap);
+  }
+
+  /// images add hash, like user.png --> user.[hash].png
+  Future<void> imagesAddHash() async{
+    final Map<String, String> imagesMap = await _getImagesMap();
+    final List<String> list = resourcesMap['js'] ?? <String>[];
+    final List<String> jsPartArr = <String>[];
+    final RegExp mainJsReg = RegExp(r'main\.(.+)\.part\.js$');
+    String mainDartJsPath = '';
+    for (final String path in list) {
+      if (mainJsReg.hasMatch(path)) {
+        jsPartArr.add(path);
+      } else if (path.endsWith('main.dart.js')) {
+        mainDartJsPath = path;
+      }
+    }
+
+    final File mainJsFile = globals.fs.file(mainDartJsPath);
+    String mainJsFileContent = mainJsFile.readAsStringSync();
+
+    /// replace image new path in main.dart.js
+    for (final String noMd5Path in imagesMap.keys) {
+      final String md5Path = imagesMap[noMd5Path] ?? '';
+      if (mainJsFileContent.contains(noMd5Path)) {
+        final String newMainFileContent = mainJsFileContent.replaceAll(noMd5Path, md5Path);
+        mainJsFile.writeAsStringSync(newMainFileContent);
+        mainJsFileContent = newMainFileContent;
+      }
+      /// replace images new path in xxx.part.js
+      for (final String jsPath in jsPartArr) {
+        final File jsFile = globals.fs.file(jsPath);
+        final String jsFileContent = jsFile.readAsStringSync();
+        if (jsFileContent.contains(noMd5Path)) {
+          final String newFileContent = jsFileContent.replaceAll(noMd5Path, md5Path);
+          jsFile.writeAsStringSync(newFileContent);
+        }
+      }
+    }
+  }
+
+  /// use js path to add sourcemap hash
+  void _sourceMapAddHash(String noMd5JsPath, String md5JsPath, String hash) {
+    final String sourceMapPath = '$noMd5JsPath.map';
+    final File sourceMapFile = globals.fs.file(sourceMapPath);
+    final String jsName = _getFileNameFromPath(noMd5JsPath);
+    final String jsNameWithMd5 = _getFileNameFromPath(md5JsPath);
+    final String sourceMapName = '$jsName.map';
+    final String sourceMapNameWithHash = '$jsNameWithMd5.map';
+
+    final File jsFile = globals.fs.file(noMd5JsPath);
+    final String jsContent = jsFile.readAsStringSync();
+    final String newJsContent = jsContent.replaceAll(sourceMapName, sourceMapNameWithHash);
+    jsFile.writeAsStringSync(newJsContent);
+    sourceMapFile.rename('$md5JsPath.map');
+  }
+
+  /// xxx.part.js add hash, like main.dart.js_1.part.js --> main.dart.js_1.part.[hash].js
+  Future<String> jsAddHash() async{
+    final List<String> list = resourcesMap['js'] ?? <String>[];
+    final List<String> partJsPathArr = <String>[];
+    String mainJsPath = '';
+    final RegExp partReg = RegExp(r'main\.(.+)\.part\.js$');
+    final RegExp mainReg = RegExp(r'main.dart.js$');
+    /// filter main.dart.js and xxx.part.js
+    for (final String path in list) {
+      if (partReg.hasMatch(path)) {
+        partJsPathArr.add(path);
+      } else if (mainReg.hasMatch(path)) {
+        mainJsPath = path;
+      }
+    }
+    final File mainJsFile = globals.fs.file(mainJsPath);
+
+    final String mainHash = await _getFileMd5(mainJsFile);
+    final String newMainJsPath = renameFileName(mainJsPath, mainHash);
+    // main.dart.js add hash
+    _sourceMapAddHash(mainJsPath, newMainJsPath, mainHash);
+
+    String mainJsContent = mainJsFile.readAsStringSync();
+
+    /// craete xxx.part.[hash].js and replace new name in main.dart.js
+    /// 1. rename part.js with hash
+    /// 2. replace part.[hash].js in main.dart.js
+    /// 3. modify sourcemap in part.js
+    Future<void> _dealPartJs(String partJsPath) async {
+      final File partJsFile = globals.fs.file(partJsPath);
+      final String partHash = await _getFileMd5(partJsFile);
+      final String newPartJsPath = renameFileName(partJsPath, partHash);
+      final String oldPartJsName = _getFileNameFromPath(partJsPath);
+      final String newPartJsName = _getFileNameFromPath(newPartJsPath);
+      // modify sourcemap in part.js
+      _sourceMapAddHash(partJsPath, newPartJsPath, partHash);
+      // rename part.js with hash
+      await partJsFile.rename(newPartJsPath);
+      // replace part.[hash].js in main.dart.js
+      mainJsContent = mainJsContent.replaceAll(oldPartJsName, newPartJsName);
+    }
+
+    final List<Future<void>> futureList = <Future<void>>[];
+    for (final String partJsPath in partJsPathArr) {
+      futureList.add(_dealPartJs(partJsPath));
+    }
+    await Future.wait(futureList);
+
+    final File newMainJsFile = globals.fs.file(newMainJsPath);
+    newMainJsFile.writeAsStringSync(mainJsContent);
+    deleteFile(mainJsPath);
+    return Future<String>.value(mainHash);
+  }
+
+  /// to collect index.html / main.dart.js / xxx.part.js(s) to the resourcesMap
+  /// to key is js or image or html, the values is the file path
+  Future<void> createResourcesMap(Environment environment) async {
+    final Directory buildDir = environment.projectDir.childDirectory('build');
+    if (await buildDir.exists()) {
+      final Stream<FileSystemEntity> buildList = buildDir.list(recursive: true);
+      await buildList.forEach((FileSystemEntity element) {
+        final String path = element.path;
+        final bool isDir = element.fileSystem.isDirectorySync(path);
+        if (!isDir) {
+          // like.gif close.png
+          final String basename = element.basename;
+          final RegExp mainJSReg = RegExp(r'main\.(.+)\.js');
+          const String imageStr = '/images/';
+          const String htmlStr = 'index.html';
+          if (mainJSReg.hasMatch(basename)) {
+            updateMap('js', path);
+          } else if (path.contains(imageStr)) {
+            updateMap('image', path);
+          } else if (path.contains(htmlStr)) {
+            updateMap('html', path);
+          }
+        }
+      });
+    }
+  }
+
+  /// the method to add / update key with values
+  void updateMap(String key, String value) {
+    if (resourcesMap.containsKey(key)) {
+      resourcesMap.update(key, (List<String> preList) {
+        preList.add(value);
+        return preList;
+      });
+    } else {
+      resourcesMap.putIfAbsent(key, () {
+        final List<String> list = <String>[];
+        list.add(value);
+        return list;
+      });
+    }
+  }
+
+  /// replace main.dart.js to hashed main.dart.js
+  Future<void> replaceMainJsNameInHtml(Environment environment, String mainJsHash) async{
+    final Directory directory = environment.projectDir.childDirectory('build/web');
+    final File htmlFile = directory.childFile('index.html');
+
+    if (await htmlFile.exists()) {
+      final String htmlContent = htmlFile.readAsStringSync();
+      final String newHtmlContent = htmlContent.replaceAll('main.dart.js', 'main.dart.$mainJsHash.js');
+      htmlFile.writeAsStringSync(newHtmlContent);
+    } else {
+      throw Exception('index.html is not exit path=${htmlFile.path}');
+    }
+  }
+
+  /// rename file with new path
+  /// like images/search.png to images/search.360e06.png
+  String renameFileName(String source, String insertStr) {
+    final int end = source.lastIndexOf('.');
+    final String preStr = source.substring(0, end);
+    final String endStr = source.substring(end);
+    final String newPath = '$preStr.$insertStr$endStr';
+    return newPath;
+  }
+
+  /// like a/b/c.js --> c.js
+  String _getFileNameFromPath(String path) {
+    final List<String> list = path.split('/');
+    return list[list.length - 1];
+  }
+
+  /// delete one file
+  void deleteFile(String path) {
+    final File file = globals.fs.file(path);
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+  }
+
+  /// calculate file md5 value
+  Future<String> _getFileMd5(File file) async {
+    final String md5Str = md5.convert(await file.readAsBytes()).toString();
+    final String shortMd5 = md5Str.substring(md5Str.length - 6);
+    return Future<String>.value(shortMd5);
+  }
 }
