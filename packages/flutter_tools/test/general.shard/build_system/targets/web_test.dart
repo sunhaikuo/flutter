@@ -145,10 +145,11 @@ void main() {
     environment.buildDir.childFile('main.dart.js').createSync();
 
     await const WebReleaseBundle().build(environment);
-
+    // get the mainJsHash to make file exist.
+    final String mainJsHash = ResourcesHandler.getMainJsHash(environment);
     expect(environment.outputDir.childFile('foo.txt')
       .readAsStringSync(), 'A');
-    expect(environment.outputDir.childFile('main.dart.js')
+    expect(environment.outputDir.childFile('main.dart.$mainJsHash.js')
       .existsSync(), true);
     expect(environment.outputDir.childDirectory('assets')
       .childFile('AssetManifest.json').existsSync(), true);
@@ -162,7 +163,7 @@ void main() {
       .readAsStringSync(), 'B');
     // Appends number to requests for service worker only
     expect(environment.outputDir.childFile('index.html').readAsStringSync(), allOf(
-      contains('<script src="main.dart.js" type="application/javascript">'),
+      contains('<script src="main.dart.$mainJsHash.js" type="application/javascript">'),
       contains('flutter_service_worker.js?v='),
     ));
   }));
@@ -682,5 +683,17 @@ void main() {
     // Expected twice, once for RESOURCES and once for CORE.
     expect(environment.outputDir.childFile('flutter_service_worker.js').readAsStringSync(),
       contains('"main.dart.js"'));
+  }));
+
+  test('index.html include hashed main.dart.[hash].js', () => testbed.run(() async {
+    environment.defines[kBuildMode] = 'release';
+    final Directory webResources = environment.projectDir.childDirectory('web');
+    webResources.childFile('index.html')
+        .createSync(recursive: true);
+    environment.buildDir.childFile('main.dart.js').createSync();
+    await const WebReleaseBundle().build(environment);
+    // get the mainJsHash to make file exist.
+    final String mainJsHash = ResourcesHandler.getMainJsHash(environment);
+    expect(environment.outputDir.childFile('main.dart.$mainJsHash.js'), exists);
   }));
 }
