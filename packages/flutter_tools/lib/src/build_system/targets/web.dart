@@ -406,7 +406,7 @@ class WebReleaseBundle extends Target {
       environment.buildDir.childFile('web_resources.d'),
     );
     // add js / images file with hash
-    await ResourcesHandler.init(environment);
+    await ResourcesHandler().init(environment);
   }
 }
 
@@ -742,22 +742,17 @@ function onlineFirst(event) {
 /// the resources with hash can block browser use cache.
 class ResourcesHandler {
   /// to cache the resources name and path
-  static Map<String, List<String>> resourcesMap = <String, List<String>>{};
+  Map<String, List<String>> resourcesMap = <String, List<String>>{};
   // calculated main.dart.js hash
   static String _mainJsHash = '';
 
   /// the ResourcesHandler entry
-  static Future<bool> init(Environment environment) async {
+  Future<bool> init(Environment environment) async {
     await createResourcesMap(environment);
     await imagesAddHash(environment);
     _mainJsHash = await jsAddHash(environment);
     await replaceMainJsNameInHtml(environment, _mainJsHash);
     return true;
-  }
-
-  // get Instance
-  ResourcesHandler getResourcesHandlerInstance() {
-    return this;
   }
 
   /// get cached mainJsHash to test or other use
@@ -767,7 +762,7 @@ class ResourcesHandler {
 
   /// to general images map, the key is image relative path and the value is image with hash path
   /// like a/b/c.png --> a/b/c.[hash].png
-  static Future<Map<String, String>> _getImagesMap(Environment environment) async {
+  Future<Map<String, String>> _getImagesMap(Environment environment) async {
     final Map<String, String> imagesMap = <String, String>{};
     final List<String> imageList = resourcesMap['image'] ?? <String>[];
     if (imageList != null) {
@@ -793,7 +788,7 @@ class ResourcesHandler {
   }
 
   /// images add hash, like user.png --> user.[hash].png
-  static Future<void> imagesAddHash(Environment environment) async{
+  Future<void> imagesAddHash(Environment environment) async{
     final Map<String, String> imagesMap = await _getImagesMap(environment);
     final List<String> list = resourcesMap['js'] ?? <String>[];
     final List<String> jsPartArr = <String>[];
@@ -836,7 +831,7 @@ class ResourcesHandler {
   }
 
   /// use js path to add sourcemap hash
-  static void _sourceMapAddHash(Environment environment, String noMd5JsPath, String md5JsPath, String hash) {
+  void _sourceMapAddHash(Environment environment, String noMd5JsPath, String md5JsPath, String hash) {
     final String sourceMapPath = '$noMd5JsPath.map';
     final File? sourceMapFile = _convertFullPathToFile(environment, sourceMapPath);
 
@@ -859,7 +854,7 @@ class ResourcesHandler {
   }
 
   /// xxx.part.js add hash, like main.dart.js_1.part.js --> main.dart.js_1.part.[hash].js
-  static Future<String> jsAddHash(Environment environment) async{
+  Future<String> jsAddHash(Environment environment) async{
     final List<String> list = resourcesMap['js'] ?? <String>[];
     final List<String> partJsPathArr = <String>[];
     String mainJsPath = '';
@@ -924,7 +919,7 @@ class ResourcesHandler {
   }
 
   /// convert the full path to environment.outputDir for input
-  static File? _convertFullPathToFile(Environment environment, String fullPath) {
+  File? _convertFullPathToFile(Environment environment, String fullPath) {
     final Directory webResources = environment.outputDir;
     final String webPath = webResources.path;
     final List<String> list = fullPath.split(webPath);
@@ -938,7 +933,7 @@ class ResourcesHandler {
 
   /// to collect index.html / main.dart.js / xxx.part.js(s) to the resourcesMap
   /// to key is js or image or html, the values is the file path
-  static Future<void> createResourcesMap(Environment environment) async {
+  Future<void> createResourcesMap(Environment environment) async {
     final Directory buildDir = environment.outputDir;
     if (await buildDir.exists()) {
       final Stream<FileSystemEntity> buildList = buildDir.list(recursive: true);
@@ -964,7 +959,7 @@ class ResourcesHandler {
   }
 
   /// the method to add / update key with values
-  static void updateMap(String key, String value) {
+  void updateMap(String key, String value) {
     if (resourcesMap.containsKey(key)) {
       resourcesMap.update(key, (List<String> preList) {
         preList.add(value);
@@ -980,7 +975,7 @@ class ResourcesHandler {
   }
 
   /// replace main.dart.js to hashed main.dart.js
-  static Future<void> replaceMainJsNameInHtml(Environment environment, String mainJsHash) async{
+  Future<void> replaceMainJsNameInHtml(Environment environment, String mainJsHash) async{
     final File htmlFile = environment.outputDir.childFile('index.html');
     if (await htmlFile.exists()) {
       final String htmlContent = htmlFile.readAsStringSync();
@@ -991,7 +986,7 @@ class ResourcesHandler {
 
   /// rename file with new path
   /// like images/search.png to images/search.360e06.png
-  static String renameFileName(String source, String insertStr) {
+  String renameFileName(String source, String insertStr) {
     final int end = source.lastIndexOf('.');
     final String preStr = source.substring(0, end);
     final String endStr = source.substring(end);
@@ -1000,13 +995,13 @@ class ResourcesHandler {
   }
 
   /// like a/b/c.js --> c.js
-  static String _getFileNameFromPath(String path) {
+  String _getFileNameFromPath(String path) {
     final List<String> list = path.split('/');
     return list[list.length - 1];
   }
 
   /// delete one file
-  static void deleteFile(Environment environment, String path) {
+  void deleteFile(Environment environment, String path) {
     // final File file = globals.fs.file(path);
     final File? file = _convertFullPathToFile(environment, path);
     if (file != null && file.existsSync()) {
@@ -1015,7 +1010,7 @@ class ResourcesHandler {
   }
 
   /// calculate file md5 value
-  static Future<String> _getFileMd5(File file) async {
+  Future<String> _getFileMd5(File file) async {
     final String md5Str = md5.convert(await file.readAsBytes()).toString();
     final String shortMd5 = md5Str.substring(md5Str.length - 6);
     return shortMd5;
