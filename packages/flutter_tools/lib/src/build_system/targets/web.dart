@@ -732,3 +732,45 @@ function onlineFirst(event) {
 }
 ''';
 }
+
+class ResourcesHandler {
+    // 把mainjs切割成6份，放到chunk里
+  void splitMainJs(String hashedMainJsName, String mainJsHash) {
+    final Map<String, List<String>?> map = Map();
+    final List<String>? list = map['js'];
+    String mainJsPath = '';
+    final RegExp mainReg = RegExp(r'main.dart.js$');
+    list?.forEach((String path) {
+      if (mainReg.hasMatch(path)) {
+        print('mainJsPath $path');
+        mainJsPath = path;
+      }
+    });
+    final String hashedMainJsPath = mainJsPath.replaceAll('main.dart.js', hashedMainJsName);
+    print('hashedMainJsPath $hashedMainJsPath');
+
+    final File f = globals.fs.file(hashedMainJsPath);
+    final String jsContent = f.readAsStringSync();
+    const int count = 6;
+    final int length = jsContent.length;
+    final int size = length ~/ count;
+
+    final String chunkPath = hashedMainJsPath.replaceAll(hashedMainJsName, mainJsHash);
+    print('chunkPath $chunkPath');
+
+    final Directory chunk = globals.fs.directory(chunkPath);
+    if (chunk.existsSync()) {
+      chunk.deleteSync(recursive: true);
+    }
+    chunk.createSync(recursive: true);
+
+    for (int i = 0; i < count; i++) {
+      String contents = jsContent.substring(i * size, (i + 1) * size);
+      if (i == count - 1) {
+        contents += jsContent.substring((i + 1) * size, jsContent.length);
+      }
+      final File file = globals.fs.file('$chunkPath/$i.js');
+      file.writeAsStringSync(contents);
+    }
+  }
+}
