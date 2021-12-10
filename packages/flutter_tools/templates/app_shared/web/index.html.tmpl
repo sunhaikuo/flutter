@@ -36,6 +36,167 @@
   <!-- This script installs service_worker.js to provide PWA functionality to
        application. For more information, see:
        https://developers.google.com/web/fundamentals/primers/service-workers -->
+  <script type="typescript">
+    interface IOption {
+        timeout: number;
+    }
+
+    interface IResponse {
+        data: string;
+        status: number;
+        statusText: string;
+        request: XMLHttpRequest;
+    }
+
+    interface ICustomResponse {
+        response: IResponse;
+        cost: number;
+    }
+
+    const w: any = window;
+
+    class Axios {
+        option: IOption;
+        constructor(option: IOption) {
+            this.option = option;
+        }
+
+        create(option?: IOption) {
+            if (option) {
+                this.option = option;
+            }
+
+            return this;
+        }
+
+        get(url: string): Promise<ICustomResponse> {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url);
+            xhr.timeout = this.option.timeout;
+            xhr.send();
+            const startTm = Date.now();
+            return new Promise((resolve, reject) => {
+                xhr.onreadystatechange = function () {
+                    if (!xhr || xhr.readyState !== 4) {
+                        return;
+                    }
+                    if (xhr.status !== 200) {
+                        reject(new Error('Network ' + xhr.status));
+                    }
+                    const response: IResponse = {
+                        data: xhr.responseText,
+                        status: xhr.status,
+                        statusText: xhr.statusText,
+                        request: xhr,
+                    };
+                    const endTm = Date.now();
+                    const cost = endTm - startTm;
+                    resolve({
+                        response,
+                        cost,
+                    });
+                };
+                xhr.onerror = function () {
+                    reject(new Error('Network Error'));
+                };
+                xhr.ontimeout = function () {
+                    reject(new Error('Network Timeout'));
+                };
+            });
+        }
+    }
+
+    const axios = new Axios({ timeout: 30 * 1000 });
+
+    function checkEnv() {
+        const hostname = location.hostname;
+        if (/(localhost)|(\d+\.){3}(\d+)$/g.test(hostname)) {
+            return 'local';
+        }
+        return 'online';
+    }
+
+    function getAssetBaseUrl() {
+        return w.assetBase || '' + '/';
+    }
+
+    function addMainDartJs() {
+        document.addEventListener('DOMContentLoaded', function () {
+            // 创建js
+            const jsUrl = '/main.dart.js';
+            const mainJs = document.createElement('script');
+            mainJs.src = jsUrl;
+            document.body.appendChild(mainJs);
+            document.getElementById('mtflutter-web-page-loading')?.remove();
+        });
+    }
+
+    function getSplitFiles() {
+        const env = checkEnv();
+        if (env === 'local') {
+            addMainDartJs();
+            return;
+        }
+        const baseUrl = getAssetBaseUrl();
+        function getResources(urlArr: string[]) {
+            const promiseArr: Promise<any>[] = [];
+            urlArr.forEach((url) => {
+                promiseArr.push(instanceAxios.get(url));
+            });
+            const start = Date.now();
+            Promise.all(promiseArr).then(
+                (resolve) => {
+                    errorCnt = 0;
+                    const jsArr: string[] = [];
+                    resolve.forEach((customResponse: ICustomResponse) => {
+                        const { response } = customResponse;
+                        jsArr.push(response.data);
+                    });
+                    const end = Date.now();
+                    const script = document.createElement('script');
+                    script.textContent = jsArr.join('');
+                    document.body.appendChild(script);
+                    setTimeout(function () {
+                        document.getElementById('mtflutter-web-page-loading')?.remove();
+                        // 上报时间
+                        report(LogType.success, `${urlArr[0]}~5.js`, `${end - start}`);
+                    }, 300);
+                },
+                () => {
+                    errorCnt++;
+                    if (errorCnt > 5) {
+                        const a = document.createElement('a');
+                        a.href = 'javascript:location.reload()';
+                        a.style.textAlign = 'center';
+                        a.style.margin = '50px auto';
+                        a.style.display = 'block';
+                        a.style.color = '#f89800';
+                        a.innerText = '加载失败，点击重新请求页面';
+                        document.body.appendChild(a);
+                        document.getElementById('mtflutter-web-page-loading')?.remove();
+                        report(LogType.fail, urlArr.join(','), 'errorCnt > 5');
+                    } else {
+                        getResources(urlArr);
+                    }
+                },
+            );
+        }
+
+        const hash = w.hash;
+        let errorCnt = 0;
+        const instanceAxios = axios.create();
+
+        const urlArr: string[] = [];
+        for (let i = 0; i < 6; i++) {
+            urlArr.push(`${baseUrl}${hash}/${i}.js`);
+        }
+        if (hash) {
+            getResources(urlArr);
+        }
+    }
+    // 加载分片
+    getSplitFiles();
+  </script>
   <script>
     var serviceWorkerVersion = null;
     var scriptLoaded = false;
